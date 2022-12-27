@@ -41,3 +41,9 @@ ld.exe*
 # test artifacts
 *.lz4
 tmp*
+
+# exclude project files
+**.sln
+**.vcxproj
+**.vcxproj.user
+**.vcxproj.filters
