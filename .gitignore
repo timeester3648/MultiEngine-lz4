@@ -26,6 +26,10 @@ _codelite_lz4/
 bin/
 *.zip
 *.swp
+compile_flags.txt
+compile_commands.json
+.vscode
+.cache
 
 # analyzers
 infer-out
@@ -41,6 +45,10 @@ ld.exe*
 # test artifacts
 *.lz4
 tmp*
+
+# generated Windows resource files
+lib/*.rc
+programs/*.rc
 
 # exclude project files
 **.sln
