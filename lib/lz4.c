@@ -1085,7 +1085,10 @@ LZ4_FORCE_INLINE int LZ4_compress_generic_validated(
 
         /* Catch up */
         filledIp = ip;
-        while (((ip>anchor) & (match > lowLimit)) && (unlikely(ip[-1]==match[-1]))) { ip--; match--; }
+        assert(ip > anchor); /* this is always true as ip has been advanced before entering the main loop */
+        if ((match > lowLimit) && unlikely(ip[-1] == match[-1])) {
+            do { ip--; match--; } while (((ip > anchor) & (match > lowLimit)) && (unlikely(ip[-1] == match[-1])));
+        }
 
         /* Encode Literals */
         {   unsigned const litLength = (unsigned)(ip - anchor);
@@ -1928,6 +1931,17 @@ read_variable_length(const BYTE** ip, const BYTE* ilimit,
     if (initial_check && unlikely((*ip) >= ilimit)) {    /* read limit reached */
         return rvl_error;
     }
+    s = **ip;
+    (*ip)++;
+    length += s;
+    if (unlikely((*ip) > ilimit)) {    /* read limit reached */
+        return rvl_error;
+    }
+    /* accumulator overflow detection (32-bit mode only) */
+    if ((sizeof(length) < 8) && unlikely(length > ((Rvl_t)(-1)/2)) ) {
+        return rvl_error;
+    }
+    if (likely(s != 255)) return length;
     do {
         s = **ip;
         (*ip)++;
@@ -1936,10 +1950,10 @@ read_variable_length(const BYTE** ip, const BYTE* ilimit,
             return rvl_error;
         }
         /* accumulator overflow detection (32-bit mode only) */
-        if ((sizeof(length)<8) && unlikely(length > ((Rvl_t)(-1)/2)) ) {
+        if ((sizeof(length) < 8) && unlikely(length > ((Rvl_t)(-1)/2)) ) {
             return rvl_error;
         }
-    } while (s==255);
+    } while (s == 255);
 
     return length;
 }
