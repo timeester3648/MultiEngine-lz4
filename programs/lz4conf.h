@@ -26,28 +26,44 @@
 #define LZ4CONF_H_32432
 
 
+/* Default compression level.
+ * Can be overridden by environment variable LZ4_CLEVEL.
+ * Can be overridden at runtime using -# command */
+#ifndef LZ4_CLEVEL_DEFAULT
+# define LZ4_CLEVEL_DEFAULT 1
+#endif
+
 /* Determines if multithreading is enabled or not
- * Default: disabled */
-#ifndef LZ4_MULTITHREAD
-# define LZ4_MULTITHREAD 0
+ * Default: enabled on Windows, disabled on other platforms */
+#ifndef LZ4IO_MULTITHREAD
+# ifdef _WIN32
+    /* Windows supports Completion Ports */
+#   define LZ4IO_MULTITHREAD 1
+# else
+    /* Requires <pthread> support.
+     * Can't be reliably and portably tested at source code level
+     * so must be set a build level */
+#   define LZ4IO_MULTITHREAD 0
+# endif
 #endif
 
 /* Determines default nb of threads for compression
  * Default value is 0, which means "auto" :
  * nb of threads is determined from detected local cpu.
- * Can also be selected at runtime using -T# command */
+ * Can be overridden by Environment Variable LZ4_NBWORKERS.
+ * Can be overridden at runtime using -T# command */
 #ifndef LZ4_NBWORKERS_DEFAULT
 # define LZ4_NBWORKERS_DEFAULT 0
 #endif
 
-/* Maximum nb of compression threads that can selected at runtime */
+/* Maximum nb of compression threads selectable at runtime */
 #ifndef LZ4_NBWORKERS_MAX
-# define LZ4_NBWORKERS_MAX 125
+# define LZ4_NBWORKERS_MAX 200
 #endif
 
 /* Determines default lz4 block size when none provided.
  * Default value is 7, which represents 4 MB.
- * Can also be selected at runtime using -B# command */
+ * Can be overridden at runtime using -B# command */
 #ifndef LZ4_BLOCKSIZEID_DEFAULT
 # define LZ4_BLOCKSIZEID_DEFAULT 7
 #endif

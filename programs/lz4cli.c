@@ -57,7 +57,7 @@
 /*****************************
 *  Constants
 ******************************/
-#if LZ4_MULTITHREAD
+#if LZ4IO_MULTITHREAD
 # define IO_MT "multithread"
 #else
 # define IO_MT "single-thread"
@@ -88,7 +88,9 @@ static unsigned displayLevel = 2;   /* 0 : no display ; 1: errors only ; 2 : dow
 /*-************************************
 *  Errors and Messages
 ***************************************/
-#define DEBUG 0
+#ifndef DEBUG
+#  define DEBUG 0
+#endif
 #define DEBUGOUTPUT(...) do { if (DEBUG) DISPLAY(__VA_ARGS__); } while (0)
 #define END_PROCESS(error, ...)                                   \
 do {                                                              \
@@ -129,7 +131,9 @@ static int usage(const char* exeName)
     DISPLAY( "Arguments : \n");
     DISPLAY( " -1     : fast compression (default) \n");
     DISPLAY( " -%2d    : slowest compression level \n", LZ4HC_CLEVEL_MAX);
+#if LZ4IO_MULTITHREAD
     DISPLAY( " -T#    : use # threads for compression (default:%i==auto) \n", LZ4_NBWORKERS_DEFAULT);
+#endif
     DISPLAY( " -d     : decompression (default for %s extension)\n", LZ4_EXTENSION);
     DISPLAY( " -f     : overwrite output without prompting \n");
     DISPLAY( " -k     : preserve source files(s)  (default) \n");
@@ -353,10 +357,40 @@ static operationMode_e determineOpMode(const char* inputFilename)
     else return om_compress;
 }
 
+#define ENV_NBTHREADS "LZ4_NBWORKERS"
+
+static unsigned init_nbWorkers(void)
+{
+    const char* const env = getenv(ENV_NBTHREADS);
+    if (env != NULL) {
+        const char* ptr = env;
+        if ((*ptr>='0') && (*ptr<='9')) {
+            return readU32FromChar(&ptr);
+        }
+        DISPLAYLEVEL(2, "Ignore environment variable setting %s=%s: not a valid unsigned value \n", ENV_NBTHREADS, env);
+    }
+    return LZ4_NBWORKERS_DEFAULT;
+}
+
+#define ENV_CLEVEL "LZ4_CLEVEL"
+
+static int init_cLevel(void)
+{
+    const char* const env = getenv(ENV_CLEVEL);
+    if (env != NULL) {
+        const char* ptr = env;
+        if ((*ptr>='0') && (*ptr<='9')) {
+            return (int)readU32FromChar(&ptr);
+        }
+        DISPLAYLEVEL(2, "Ignore environment variable setting %s=%s: not a valid unsigned value \n", ENV_CLEVEL, env);
+    }
+    return LZ4_CLEVEL_DEFAULT;
+}
+
 int main(int argCount, const char** argv)
 {
     int argNb,
-        cLevel=1,
+        cLevel=init_cLevel(),
         cLevelLast=-10000,
         legacy_format=0,
         forceStdout=0,
@@ -365,7 +399,7 @@ int main(int argCount, const char** argv)
         multiple_inputs=0,
         all_arguments_are_files=0,
         operationResult=0;
-    unsigned nbWorkers = LZ4_NBWORKERS_DEFAULT;
+    unsigned nbWorkers = init_nbWorkers();
     operationMode_e mode = om_auto;
     const char* input_filename = NULL;
     const char* output_filename= NULL;
@@ -442,7 +476,7 @@ int main(int argCount, const char** argv)
                 if (!strcmp(argument,  "--no-crc")) { LZ4IO_setStreamChecksumMode(prefs, 0); LZ4IO_setBlockChecksumMode(prefs, 0); BMK_skipChecksums(1); continue; }
                 if (!strcmp(argument,  "--content-size")) { LZ4IO_setContentSize(prefs, 1); continue; }
                 if (!strcmp(argument,  "--no-content-size")) { LZ4IO_setContentSize(prefs, 0); continue; }
-                if (!strcmp(argument,  "--list")) { mode = om_list; continue; }
+                if (!strcmp(argument,  "--list")) { mode = om_list; multiple_inputs = 1; continue; }
                 if (!strcmp(argument,  "--sparse")) { LZ4IO_setSparseFile(prefs, 2); continue; }
                 if (!strcmp(argument,  "--no-sparse")) { LZ4IO_setSparseFile(prefs, 0); continue; }
                 if (!strcmp(argument,  "--favor-decSpeed")) { LZ4IO_favorDecSpeed(prefs, 1); continue; }
@@ -683,12 +717,14 @@ int main(int argCount, const char** argv)
 #ifdef _FILE_OFFSET_BITS
     DISPLAYLEVEL(5, "_FILE_OFFSET_BITS defined: %ldL\n", (long) _FILE_OFFSET_BITS);
 #endif
-#if !LZ4_MULTITHREAD
-    if (nbWorkers > 1)
+#if !LZ4IO_MULTITHREAD
+    if (nbWorkers > 1) {
         DISPLAYLEVEL(2, "warning: this executable doesn't support multithreading \n");
+    }
 #endif
-    if ((mode == om_compress) || (mode == om_bench))
+    if ((mode == om_compress) || (mode == om_bench)) {
         DISPLAYLEVEL(4, "Blocks size : %u KB\n", (U32)(blockSize>>10));
+    }
 
     if (multiple_inputs) {
         input_filename = inFileNames[0];
@@ -741,16 +777,7 @@ int main(int argCount, const char** argv)
     }
 
     /* No output filename ==> try to select one automatically (when possible) */
-    while ((!output_filename) && (multiple_inputs==0)) {
-        if (!IS_CONSOLE(stdout) && mode != om_list) {
-            /* Default to stdout whenever stdout is not the console.
-             * Note : this policy may change in the future, therefore don't rely on it !
-             * To ensure `stdout` is explicitly selected, use `-c` command flag.
-             * Conversely, to ensure output will not become `stdout`, use `-m` command flag */
-            DISPLAYLEVEL(1, "Warning : using stdout as default output. Do not rely on this behavior: use explicit `-c` instead ! \n");
-            output_filename = stdoutmark;
-            break;
-        }
+    if ((!output_filename) && (multiple_inputs==0)) {
         if (mode == om_auto) {  /* auto-determine compression or decompression, based on file extension */
             mode = determineOpMode(input_filename);
         }
@@ -762,9 +789,9 @@ int main(int argCount, const char** argv)
             strcat(dynNameSpace, LZ4_EXTENSION);
             output_filename = dynNameSpace;
             DISPLAYLEVEL(2, "Compressed filename will be : %s \n", output_filename);
-            break;
         }
-        if (mode == om_decompress) {/* decompress to file (automatic output name only works if input filename has correct format extension) */
+        if (mode == om_decompress) {
+            /* decompress to file (automatic output name only works if input filename has correct format extension) */
             size_t outl;
             size_t const inl = strlen(input_filename);
             dynNameSpace = (char*)calloc(1,inl+1);
@@ -777,7 +804,6 @@ int main(int argCount, const char** argv)
             output_filename = dynNameSpace;
             DISPLAYLEVEL(2, "Decoding file %s \n", output_filename);
         }
-        break;
     }
 
     if (mode == om_list) {
@@ -822,11 +848,17 @@ int main(int argCount, const char** argv)
     } else if (mode == om_list){
         operationResult = LZ4IO_displayCompressedFilesInfo(inFileNames, ifnIdx);
     } else {   /* compression is default action */
-#if LZ4_MULTITHREAD
+#if LZ4IO_MULTITHREAD
         if (nbWorkers != 1) {
             if (nbWorkers==0)
                 nbWorkers = (unsigned)LZ4IO_defaultNbWorkers();
-            DISPLAYLEVEL(3, "Using %u threads for compression \n", nbWorkers);
+            if (nbWorkers > LZ4_NBWORKERS_MAX) {
+                DISPLAYLEVEL(3, "Requested %u threads too large => automatically reduced to %u \n",
+                            nbWorkers, LZ4_NBWORKERS_MAX);
+                nbWorkers = LZ4_NBWORKERS_MAX;
+            } else {
+                DISPLAYLEVEL(3, "Using %u threads for compression \n", nbWorkers);
+            }
         }
         LZ4IO_setNbWorkers(prefs, (int)nbWorkers);
 #endif

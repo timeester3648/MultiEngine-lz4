@@ -126,8 +126,9 @@ static void* LZ4F_malloc(size_t s, LZ4F_CustomMem cmem)
 
 static void LZ4F_free(void* p, LZ4F_CustomMem cmem)
 {
-    /* custom malloc defined : use it */
+    if (p == NULL) return;
     if (cmem.customFree != NULL) {
+        /* custom allocation defined : use it */
         cmem.customFree(cmem.opaqueState, p);
         return;
     }
@@ -187,9 +188,9 @@ static U32 LZ4F_readLE32 (const void* src)
 {
     const BYTE* const srcPtr = (const BYTE*)src;
     U32 value32 = srcPtr[0];
-    value32 += ((U32)srcPtr[1])<< 8;
-    value32 += ((U32)srcPtr[2])<<16;
-    value32 += ((U32)srcPtr[3])<<24;
+    value32 |= ((U32)srcPtr[1])<< 8;
+    value32 |= ((U32)srcPtr[2])<<16;
+    value32 |= ((U32)srcPtr[3])<<24;
     return value32;
 }
 
@@ -206,13 +207,13 @@ static U64 LZ4F_readLE64 (const void* src)
 {
     const BYTE* const srcPtr = (const BYTE*)src;
     U64 value64 = srcPtr[0];
-    value64 += ((U64)srcPtr[1]<<8);
-    value64 += ((U64)srcPtr[2]<<16);
-    value64 += ((U64)srcPtr[3]<<24);
-    value64 += ((U64)srcPtr[4]<<32);
-    value64 += ((U64)srcPtr[5]<<40);
-    value64 += ((U64)srcPtr[6]<<48);
-    value64 += ((U64)srcPtr[7]<<56);
+    value64 |= ((U64)srcPtr[1]<<8);
+    value64 |= ((U64)srcPtr[2]<<16);
+    value64 |= ((U64)srcPtr[3]<<24);
+    value64 |= ((U64)srcPtr[4]<<32);
+    value64 |= ((U64)srcPtr[5]<<40);
+    value64 |= ((U64)srcPtr[6]<<48);
+    value64 |= ((U64)srcPtr[7]<<56);
     return value64;
 }
 
@@ -436,7 +437,7 @@ size_t LZ4F_compressFrame_usingCDict(LZ4F_cctx* cctx,
     BYTE* dstPtr = dstStart;
     BYTE* const dstEnd = dstStart + dstCapacity;
 
-    DEBUGLOG(4, "LZ4F_compressFrame_usingCDict (srcSize=%u)", srcSize);
+    DEBUGLOG(4, "LZ4F_compressFrame_usingCDict (srcSize=%u)", (unsigned)srcSize);
     if (preferencesPtr!=NULL)
         prefs = *preferencesPtr;
     else
@@ -547,18 +548,19 @@ LZ4F_createCDict_advanced(LZ4F_CustomMem cmem, const void* dictBuffer, size_t di
         dictSize = 64 KB;
     }
     cdict->dictContent = LZ4F_malloc(dictSize, cmem);
+    /* note: using @cmem to allocate => can't use default create */
     cdict->fastCtx = (LZ4_stream_t*)LZ4F_malloc(sizeof(LZ4_stream_t), cmem);
-    if (cdict->fastCtx)
-        LZ4_initStream(cdict->fastCtx, sizeof(LZ4_stream_t));
     cdict->HCCtx = (LZ4_streamHC_t*)LZ4F_malloc(sizeof(LZ4_streamHC_t), cmem);
-    if (cdict->HCCtx)
-        LZ4_initStream(cdict->HCCtx, sizeof(LZ4_streamHC_t));
     if (!cdict->dictContent || !cdict->fastCtx || !cdict->HCCtx) {
         LZ4F_freeCDict(cdict);
         return NULL;
     }
     memcpy(cdict->dictContent, dictStart, dictSize);
-    LZ4_loadDict (cdict->fastCtx, (const char*)cdict->dictContent, (int)dictSize);
+    LZ4_initStream(cdict->fastCtx, sizeof(LZ4_stream_t));
+    LZ4_loadDictSlow(cdict->fastCtx, (const char*)cdict->dictContent, (int)dictSize);
+    LZ4_initStreamHC(cdict->HCCtx, sizeof(LZ4_streamHC_t));
+    /* note: we don't know at this point which compression level is going to be used
+     * as a consequence, HCCtx is created for the more common HC mode */
     LZ4_setCompressionLevel(cdict->HCCtx, LZ4HC_CLEVEL_DEFAULT);
     LZ4_loadDictHC(cdict->HCCtx, (const char*)cdict->dictContent, (int)dictSize);
     return cdict;
