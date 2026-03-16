@@ -5,7 +5,7 @@ environment:
   matrix:
     - COMPILER: gcc
       PLATFORM: mingw32
-    - COMPILER: gcc  
+    - COMPILER: gcc
       PLATFORM: mingw64
     - COMPILER: clang
       PLATFORM: mingw64
@@ -24,7 +24,7 @@ build_script:
   # Configure PATH for MinGW builds
   - if [%PLATFORM%]==[mingw32] set PATH=%PATH_MINGW32%;%PATH%
   - if [%PLATFORM%]==[mingw64] set PATH=%PATH_MINGW64%;%PATH%
-  
+
   # GCC Build
   - if [%COMPILER%]==[gcc] (
       echo "GCC build started" &&
@@ -33,20 +33,21 @@ build_script:
       make -j -C programs lz4 V=1 &&
       make -j -C tests fullbench V=1 &&
       make -j -C tests fuzzer V=1 &&
-      make -j -C lib lib V=1 &&
+      make -j -C lib lib V=1 LDFLAGS="-static-libgcc" &&
       echo "Packaging GCC build..." &&
       mkdir bin\dll bin\static bin\example bin\include &&
       copy tests\fullbench.c bin\example\ &&
       copy lib\xxhash.* bin\example\ &&
       copy lib\lz4*.h bin\include\ &&
       copy lib\liblz4.a bin\static\liblz4_static.lib &&
-      copy lib\liblz4.dll* bin\dll\ >nul 2>&1 &&
+      copy lib\liblz4.dll.a bin\dll\ >nul 2>&1 &&
+      (copy lib\liblz4.dll bin\dll\ 2>nul || copy lib\msys-lz4-1.dll bin\dll\liblz4.dll 2>nul || copy lib\cyglz4-1.dll bin\dll\liblz4.dll 2>nul || echo DLL copy warning) &&
       copy lib\dll\example\* bin\example\ >nul 2>&1 &&
       copy programs\lz4.exe bin\lz4.exe &&
       copy tests\*.exe programs\
     )
-  
-  # Clang Build  
+
+  # Clang Build
   - if [%COMPILER%]==[clang] (
       echo "Clang build started" &&
       clang -v &&
@@ -58,7 +59,7 @@ build_script:
       make -j -C lib lib CC=clang V=1 &&
       copy tests\*.exe programs\
     )
-  
+
   # Create release archives (GCC only)
   - if [%COMPILER%]==[gcc] if [%PLATFORM%]==[mingw64] 7z.exe a -bb1 bin\lz4_x64.zip NEWS .\bin\lz4.exe README.md .\bin\example .\bin\dll .\bin\static .\bin\include
   - if [%COMPILER%]==[gcc] if [%PLATFORM%]==[mingw64] appveyor PushArtifact bin\lz4_x64.zip
@@ -82,5 +83,5 @@ test_script:
 artifacts:
   - path: bin\lz4_x64.zip
     name: LZ4 Windows x64 Build
-  - path: bin\lz4_x86.zip  
+  - path: bin\lz4_x86.zip
     name: LZ4 Windows x86 Build
