@@ -39,7 +39,7 @@ jobs:
 
     steps:
     - name: Checkout
-      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
     - name: Install dependencies
       run: |
@@ -61,6 +61,9 @@ jobs:
 
     - name: Installation test
       run: make -C tests test-install V=1
+
+    - name: Library build options test
+      run: make -C tests test-build-options V=1
 
     - name: Build all with strict flags
       run: |
@@ -89,11 +92,22 @@ jobs:
         make clean
         make -j cxxtest V=1
 
+    - name: C++ modules test
+      if: ${{ startsWith(matrix.cc, 'clang') }}
+      run: make -C tests test-cxx-modules V=1
+
     - name: Freestanding environment test
       if: ${{ matrix.freestanding }}
       run: |
         make clean
         make test-freestanding V=1
+
+    - name: Freestanding test with 32-bit target on 64-bit host
+      # freestanding test must be selected from the compiler's target, not the host (#1464)
+      if: ${{ matrix.x86 }}
+      run: |
+        make clean
+        make test-freestanding V=1 CC="$CC -m32"
 
     - name: Fortified build test
       run: |

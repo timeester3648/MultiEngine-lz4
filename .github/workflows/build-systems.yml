@@ -23,7 +23,7 @@ jobs:
 
     steps:
     - name: Checkout
-      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
     - name: Build Win32 Debug
       # Switching to debug mode, since vs2022 optimizations seem to introduce a bug since July 2024
@@ -46,7 +46,7 @@ jobs:
         popd
 
     - name: Upload generated VS2022 directory
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: VS2022-Build-Dir
         path: "build/visual/Visual Studio 17 2022"
@@ -66,19 +66,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout
-      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
     - name: Setup Python
-      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
       with:
         python-version: '3.x'
 
     - name: Install build tools
       run: |
         sudo apt-get update
-        sudo apt-get install tree ninja-build
-        python -m pip install --upgrade pip
-        pip3 install --user meson
+        sudo apt-get install tree ninja-build meson
 
     - name: Display environment info
       run: |
@@ -87,10 +85,12 @@ jobs:
         type meson && which meson && meson --version
 
     - name: Configure build
+      # debug build (assertions), with some optimization : at -O0, test processing would dominate the job
       run: >
         meson setup
         --fatal-meson-warnings
         --buildtype=debug
+        -Doptimization=1
         -Db_lundef=false
         -Dauto_features=enabled
         -Dprograms=true
@@ -98,6 +98,13 @@ jobs:
         -Dtests=true
         -Dexamples=true
         build/meson builddir
+
+    - name: Configure static feature options
+      run: |
+        meson setup build/meson build-noalloc -Ddefault_library=static -Dossfuzz=false -Ddisable-memory-allocation=true
+        meson setup build/meson build-independent -Ddefault_library=static -Dossfuzz=false -Dendianness-independent-output=true
+        meson compile -C build-independent
+        meson compile -C build-noalloc
 
     - name: Run tests
       run: meson test -C builddir
@@ -107,3 +114,46 @@ jobs:
         cd builddir
         DESTDIR=./staging ninja install
         tree ./staging
+
+  meson-msvc:
+    name: Meson + Ninja (MSVC, shared library)
+    runs-on: windows-2022
+    steps:
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+    - name: Setup Python
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+      with:
+        python-version: '3.x'
+
+    - name: Install build tools
+      run: python -m pip install meson ninja
+
+    - name: Configure build
+      # --vsenv locates and activates the MSVC environment (no VS Command Prompt needed)
+      # CC=cl prevents meson from picking up the gcc preinstalled on the runner
+      env:
+        CC: cl
+      run: >
+        meson setup
+        --vsenv
+        -Ddefault_library=shared
+        -Dossfuzz=false
+        -Dtests=true
+        build/meson builddir
+
+    - name: Build
+      run: meson compile -C builddir
+
+    - name: Unit tests
+      # only unittest : the other tests require the command line tool, or a POSIX shell
+      run: meson test -C builddir unittest --print-errorlogs
+
+    - name: Test installation
+      # MSVC only generates the import library lz4.lib if the DLL exports symbols,
+      # which requires LZ4_DLL_EXPORT=1 to reach the library sources (#1078)
+      run: |
+        meson install -C builddir --no-rebuild --destdir "${{ github.workspace }}\staging"
+        Get-ChildItem -Recurse -File staging | Select-Object -ExpandProperty FullName
+        if (-not (Get-ChildItem -Recurse -Filter lz4.lib staging)) { throw "import library lz4.lib was not installed" }

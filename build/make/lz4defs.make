@@ -74,9 +74,13 @@ endif
 
 ifeq ($(WINBASED),yes)
 EXT        = .exe
-WINDRES ?= windres
-LDFLAGS += -Wl,--force-exe-suffix
+# windres of the compiler's toolchain when there is one (x86_64-w64-mingw32-clang : x86_64-w64-mingw32-windres),
+# so that resources target the same architecture
+CC_TOOL_PREFIX = $(patsubst %clang,%,$(patsubst %gcc,%,$(firstword $(filter %-gcc %-clang,$(CC)))))
+WINDRES ?= $(or $(if $(CC_TOOL_PREFIX),$(shell command -v $(CC_TOOL_PREFIX)windres 2>$(VOID))),windres)
 endif
+# executable suffix of multiconf.make, which detects only native Windows itself
+EXE = $(EXT)
 
 LIBLZ4      = $(LIBLZ4_NAME).$(SHARED_EXT_VER)
 
@@ -89,6 +93,35 @@ VOID := nul
   else
 VOID  := /dev/null
   endif
+endif
+
+# PTHREAD_PROBE : 1 when a program including <pthread.h> compiles and links with -pthread, 0 otherwise.
+# Evaluated where it's used (with the CC and ALLFLAGS of the invoking Makefile),
+# within a private temporary directory : safe for concurrent invocations, and read-only source trees.
+NUM_SYMBOL := \#
+PTHREAD_PROBE = $(shell d=$$(mktemp -d "$${TMPDIR:-/tmp}/lz4_pthread_XXXXXX" 2> $(VOID)) \
+                  && printf '$(NUM_SYMBOL)include <pthread.h>\nint main(void) { return 0; }' > "$$d/probe.c" \
+                  && $(CC) $(ALLFLAGS) -o "$$d/probe$(EXT)" "$$d/probe.c" -pthread 2> $(VOID) \
+                  && echo 1 || echo 0; \
+                  [ -n "$$d" ] && rm -rf "$$d")
+
+# JCC_FLAGS : on x86 and x86-64, keep branches within 32-byte boundaries,
+# which mitigates the JCC erratum of Intel cpus of the Skylake family.
+# lz4 is faster on these cpus (measured on Coffee Lake : compression up to +12%, decompression up to +31%),
+# and unchanged on others (AMD Zen 4 and Zen 5, Intel Lunar Lake).
+# The option depends on the compiler (clang : driver option, gcc : assembler option, binutils >= 2.34) :
+# it's probed with the CC of the invoking Makefile, once, when JCC_FLAGS is first used.
+# JCC_ERRATUM=0 disables it.
+JCC_PROBE = $(shell d=$$(mktemp -d "$${TMPDIR:-/tmp}/lz4_jcc_XXXXXX" 2> $(VOID)) \
+              && printf '$(NUM_SYMBOL)if !defined(__x86_64__) && !defined(__i386__)\n$(NUM_SYMBOL)error not x86\n$(NUM_SYMBOL)endif\nint f(int x) { return x ? 1 : 2; }\n' > "$$d/probe.c" \
+              && for f in -mbranches-within-32B-boundaries -Wa,-mbranches-within-32B-boundaries; do \
+                   $(CC) $$f -Werror -c "$$d/probe.c" -o "$$d/probe.o" 2> $(VOID) && { echo $$f; break; }; \
+                 done; \
+              [ -n "$$d" ] && rm -rf "$$d")
+ifeq ($(JCC_ERRATUM),0)
+JCC_FLAGS :=
+else
+JCC_FLAGS = $(eval JCC_FLAGS := $(JCC_PROBE))$(JCC_FLAGS)
 endif
 
 ifneq (,$(filter Linux Darwin GNU/kFreeBSD GNU OpenBSD FreeBSD NetBSD DragonFly SunOS Haiku MidnightBSD MINGW% CYGWIN% MSYS% AIX,$(shell $(UNAME))))

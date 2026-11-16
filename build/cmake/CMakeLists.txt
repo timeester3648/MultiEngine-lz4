@@ -49,12 +49,9 @@ endif()
 #-----------------------------------------------------------------------------
 # BUILD OPTIONS - Configure build targets and features
 #-----------------------------------------------------------------------------
-option(LZ4_BUILD_CLI "Build lz4 program" ON)
-option(LZ4_BUILD_LEGACY_LZ4C "Build lz4c program with legacy argument support" OFF)
-
-
 # Determine if LZ4 is being built as part of another project.
-# If LZ4 is bundled in another project, we don't want to install anything.
+# If LZ4 is bundled in another project, we don't want to install anything,
+# nor build the lz4 program by default.
 # Default behavior can be overridden by setting the LZ4_BUNDLED_MODE variable.
 if(NOT DEFINED LZ4_BUNDLED_MODE)
   get_directory_property(LZ4_IS_SUBPROJECT PARENT_DIRECTORY)
@@ -65,6 +62,20 @@ if(NOT DEFINED LZ4_BUNDLED_MODE)
   endif()
 endif()
 mark_as_advanced(LZ4_BUNDLED_MODE)
+
+if(LZ4_BUNDLED_MODE)
+  set(LZ4_BUILD_CLI_DEFAULT OFF)
+else()
+  set(LZ4_BUILD_CLI_DEFAULT ON)
+endif()
+option(LZ4_BUILD_CLI "Build lz4 program" ${LZ4_BUILD_CLI_DEFAULT})
+option(LZ4_BUILD_LEGACY_LZ4C "Build lz4c program with legacy argument support" OFF)
+option(LZ4_BUILD_MULTITHREAD "Enable multithreading in lz4 programs" ON)
+# By default, the shared library supports multithreaded compression (see LZ4F_preferences_t.nbWorkers),
+# while the static library doesn't, so that programs linking it don't need to link threads.
+option(LZ4_SHARED_MULTITHREAD "Enable multithreading support in shared library" ON)
+option(LZ4_STATIC_MULTITHREAD "Enable multithreading support in static library (programs linking it must then link threads)" OFF)
+
 
 #-----------------------------------------------------------------------------
 # PACKAGING - CPack configuration
@@ -206,6 +217,44 @@ if(BUILD_STATIC_LIBS)
 endif(BUILD_STATIC_LIBS)
 
 #-----------------------------------------------------------------------------
+# LIBRARY MULTITHREADING - requires pthread, except on Windows
+#-----------------------------------------------------------------------------
+set(LZ4_LIB_MT_TARGETS)
+if(BUILD_SHARED_LIBS AND LZ4_SHARED_MULTITHREAD)
+  list(APPEND LZ4_LIB_MT_TARGETS lz4_shared)
+endif()
+if(BUILD_STATIC_LIBS AND LZ4_STATIC_MULTITHREAD)
+  list(APPEND LZ4_LIB_MT_TARGETS lz4_static)
+endif()
+set(LZ4_STATIC_NEEDS_THREADS OFF)   # used by lz4Config.cmake and liblz4.pc
+if(LZ4_LIB_MT_TARGETS)
+  if(WIN32)
+    set(LZ4_LIB_HAVE_THREADS ON)    # Windows threads : no additional library
+  else()
+    set(THREADS_PREFER_PTHREAD_FLAG ON)
+    find_package(Threads)
+    if(CMAKE_USE_PTHREADS_INIT)
+      set(LZ4_LIB_HAVE_THREADS ON)
+      foreach(target ${LZ4_LIB_MT_TARGETS})
+        target_link_libraries(${target} PRIVATE Threads::Threads)
+      endforeach()
+      if(BUILD_STATIC_LIBS AND LZ4_STATIC_MULTITHREAD)
+        set(LZ4_STATIC_NEEDS_THREADS ON)
+      endif()
+    else()
+      set(LZ4_LIB_HAVE_THREADS OFF)
+      message(WARNING "pthread not found : liblz4 is built without multithreading support")
+    endif()
+  endif()
+  if(LZ4_LIB_HAVE_THREADS)
+    foreach(target ${LZ4_LIB_MT_TARGETS})
+      target_compile_definitions(${target} PRIVATE LZ4F_MULTITHREAD=1)
+    endforeach()
+    message(STATUS "liblz4 multithreading support : ${LZ4_LIB_MT_TARGETS}")
+  endif()
+endif()
+
+#-----------------------------------------------------------------------------
 # CLI EXECUTABLES - Configuring command-line programs
 #-----------------------------------------------------------------------------
 # lz4
@@ -221,6 +270,27 @@ if(LZ4_BUILD_LEGACY_LZ4C)
   add_executable(lz4c ${LZ4_CLI_SOURCES})
   set_target_properties(lz4c PROPERTIES COMPILE_DEFINITIONS "ENABLE_LZ4C_LEGACY_OPTIONS")
 endif(LZ4_BUILD_LEGACY_LZ4C)
+
+# multithreading : requires pthread, except on Windows (see programs/lz4conf.h)
+if(LZ4_PROGRAMS_BUILT)
+  if(NOT LZ4_BUILD_MULTITHREAD)
+    set_property(TARGET ${LZ4_PROGRAMS_BUILT} APPEND PROPERTY COMPILE_DEFINITIONS LZ4IO_MULTITHREAD=0)
+  elseif(WIN32)
+    # liblz4 sources are compiled into programs : frames are compressed by its worker threads
+    set_property(TARGET ${LZ4_PROGRAMS_BUILT} APPEND PROPERTY COMPILE_DEFINITIONS LZ4F_MULTITHREAD=1)
+  else()
+    set(THREADS_PREFER_PTHREAD_FLAG ON)
+    find_package(Threads)
+    if(CMAKE_USE_PTHREADS_INIT)
+      set_property(TARGET ${LZ4_PROGRAMS_BUILT} APPEND PROPERTY COMPILE_DEFINITIONS LZ4IO_MULTITHREAD=1 LZ4F_MULTITHREAD=1)
+      foreach(prog ${LZ4_PROGRAMS_BUILT})
+        target_link_libraries(${prog} PRIVATE Threads::Threads)
+      endforeach()
+    else()
+      message(WARNING "pthread not found : lz4 programs are built without multithreading support")
+    endif()
+  endif()
+endif()
 
 #-----------------------------------------------------------------------------
 # COMPILER FLAGS - Configure warning flags and compiler-specific options
@@ -258,6 +328,24 @@ else()
     unset(flag_to_test)
   endforeach(flag)
 endif(MSVC)
+
+# On x86 and x86-64, keep branches within 32-byte boundaries,
+# which mitigates the JCC erratum of Intel cpus of the Skylake family :
+# lz4 is faster on these cpus (measured on Coffee Lake : compression up to +12%, decompression up to +31%),
+# and unchanged on others (AMD Zen 4 and Zen 5, Intel Lunar Lake).
+# The option depends on the compiler : MSVC, clang, or gcc (assembler option, binutils >= 2.34).
+option(LZ4_JCC_ERRATUM "Mitigate the JCC erratum of Intel Skylake family cpus (x86 only)" ON)
+if(LZ4_JCC_ERRATUM AND CMAKE_SYSTEM_PROCESSOR MATCHES "^([xX]86_64|AMD64|amd64|i[3-6]86|x86)$")
+  include(CheckCCompilerFlag)
+  foreach(flag /QIntel-jcc-erratum -mbranches-within-32B-boundaries -Wa,-mbranches-within-32B-boundaries)
+    string(REGEX REPLACE "[^a-zA-Z0-9]+" "_" test_name "CFLAG_JCC_${flag}")
+    check_c_compiler_flag("${flag}" ${test_name})
+    if(${test_name})
+      string(APPEND CMAKE_C_FLAGS " ${flag}")
+      break()
+    endif()
+  endforeach(flag)
+endif()
 
 
 #-----------------------------------------------------------------------------
@@ -360,3 +448,7 @@ endif("${CMAKE_INSTALL_FULL_INCLUDEDIR}" STREQUAL "${CMAKE_INSTALL_PREFIX}/${CMA
 # for liblz4.pc substitution
 set(VERSION ${LZ4_VERSION_STRING})
 configure_file(${LZ4_LIB_SOURCE_DIR}/liblz4.pc.in liblz4.pc @ONLY)
+if(LZ4_STATIC_NEEDS_THREADS)
+  # static linking (pkg-config --static) must then link threads
+  file(APPEND "${CMAKE_CURRENT_BINARY_DIR}/liblz4.pc" "Libs.private: -pthread\n")
+endif()

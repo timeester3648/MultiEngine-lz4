@@ -28,7 +28,8 @@ jobs:
           - { arch: RISC-V,   pkgs: 'qemu-system-riscv64 gcc-riscv64-linux-gnu',   xcc: riscv64-linux-gnu-gcc,     xemu: qemu-riscv64-static, makevar: "" }
           - { arch: SPARC,    pkgs: 'qemu-system-sparc gcc-sparc64-linux-gnu',     xcc: sparc64-linux-gnu-gcc,     xemu: qemu-sparc64-static, makevar: "" }
 
-    runs-on: ubuntu-latest
+    # ubuntu-26.04 has neither qemu-user-static nor MIPS cross-compilers
+    runs-on: ubuntu-24.04
     env:
       XCC: ${{ matrix.xcc }}
       XEMU: ${{ matrix.xemu }}
@@ -36,7 +37,7 @@ jobs:
 
     steps:
     - name: Checkout
-      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
     - name: Install cross-compilation tools
       run: |
@@ -51,6 +52,10 @@ jobs:
         $XCC -v  # Show built-in specs
         echo "=== QEMU Emulator Information ==="
         type $XEMU && which $XEMU && $XEMU --version
+
+    - name: Freestanding test with non-x86_64 target on x86_64 host
+      # freestanding test must be selected from the compiler's target, not the host (#1464)
+      run: make test-freestanding V=1 CC=$XCC
 
     - name: Run platform tests (ARM/ARM64/PPC/S390X)
       if: contains(fromJSON('["ARM", "ARM64", "PPC", "S390X"]'), matrix.arch)
@@ -69,7 +74,7 @@ jobs:
     runs-on: macos-latest
     steps:
     - name: Checkout
-      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
     - name: Display environment info
       run: |
@@ -82,6 +87,9 @@ jobs:
         make clean
         CFLAGS="-Werror -O0" make default V=1
 
+    - name: C++ modules test
+      run: make -C tests test-cxx-modules CXX=c++ V=1
+
     - name: Run comprehensive tests
       run: |
         make clean
@@ -91,3 +99,43 @@ jobs:
       # Ensure `make test` doesn't depend on the status of the console
       # See issue #990 for detailed explanations
       run: make -j test > /dev/null
+
+  mingw:
+    # recent MinGW-w64 toolchains (AppVeyor's are much older)
+    name: MinGW ${{ matrix.msystem }} ${{ matrix.cc }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { msystem: MINGW64, cc: gcc }
+          - { msystem: MINGW64, cc: clang }
+          - { msystem: MINGW32, cc: gcc }
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+    - name: Install MSYS2
+      uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0
+      with:
+        msystem: ${{ matrix.msystem }}
+        update: true
+        install: make diffutils
+        pacboy: ${{ matrix.cc }}:p
+
+    - name: Display environment info
+      run: |
+        ${{ matrix.cc }} --version | head -1
+        as --version | head -1
+        make --version | head -1
+
+    - name: Build with strict flags
+      run: CC=${{ matrix.cc }} CFLAGS="-Werror -O0" make default V=1
+
+    - name: Run tests
+      run: |
+        make clean
+        CC=${{ matrix.cc }} CFLAGS="-O3 -Werror" make -C tests test-unittest test-lz4-essentials test-frametest test-fuzzer FUZZER_TIME=-T30s

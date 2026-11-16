@@ -4,7 +4,7 @@
 #
 # This Makefile is validated for Linux, macOS, *BSD, Hurd, Solaris, MSYS2 targets
 #
-# GPL v2 License
+# GPL-2.0-or-later License
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -50,8 +50,9 @@ DEBUGFLAGS= -Wall -Wextra -Wundef -Wcast-qual -Wcast-align -Wshadow \
             -Wswitch-enum -Wdeclaration-after-statement -Wstrict-prototypes \
             -Wpointer-arith -Wstrict-aliasing=1
 USERCFLAGS:= -O3 $(CFLAGS) # -O3 can be overruled by user-provided -Ox level
-CFLAGS    = $(DEBUGFLAGS) $(USERCFLAGS)
-CPPFLAGS += -I$(LIBLZ4DIR) -DXXH_NAMESPACE=LZ4_
+CFLAGS    = $(DEBUGFLAGS) $(JCC_FLAGS) $(USERCFLAGS)   # JCC_FLAGS : see build/make/lz4defs.make
+# flags the build needs : see lib/Makefile
+MCM_CPPFLAGS += -I$(LIBLZ4DIR) -DXXH_NAMESPACE=LZ4_
 
 include ../build/make/lz4defs.make
 
@@ -60,23 +61,33 @@ ifeq ($(TARGET_OS)$(shell $(OS_VERSION)),SunOS5.10)
 LDFLAGS  += -lrt
 endif
 
-ALLFLAGS  = $(CFLAGS) $(CPPFLAGS) $(LDFLAGS)
+ALLFLAGS  = $(MCM_CFLAGS) $(CFLAGS) $(MCM_CPPFLAGS) $(CPPFLAGS) $(MCM_LDFLAGS) $(LDFLAGS)
 
 .PHONY:default
 default: lz4-release
 
-C_SRCDIRS = $(LIBLZ4DIR) .
+C_SRCDIRS = $(LIBLZ4DIR)
 include ../build/make/multiconf.make
 
-# thread detection
-NUM_SYMBOL   := \#
+# thread detection (PTHREAD_PROBE : see build/make/lz4defs.make) : skipped by goals building no multithreaded program,
+# and run once per command : sub-makes inherit its result (as in lib/Makefile)
 NO_THREAD_MSG:= ==> no multithread support: built for single-thread mode only
-HAVE_PTHREAD := $(shell printf '$(NUM_SYMBOL)include <pthread.h>\nint main(void) { return 0; }' > have_pthread.c && $(CC) $(ALLFLAGS) -o have_pthread$(EXT) have_pthread.c -pthread 2> $(VOID) && rm -f have_pthread$(EXT) && echo 1 || echo 0; rm have_pthread.c)
+ifeq (,$(filter-out clean clean-man uninstall man lz4.1 preview-man lz4-nomt liblz4,$(or $(MAKECMDGOALS),default)))
+  HAVE_PTHREAD := 0
+else
+  ifeq (,$(LZ4_PTHREAD_PROBED))
+    LZ4_PTHREAD_PROBED := $(PTHREAD_PROBE)
+    export LZ4_PTHREAD_PROBED
+  endif
+  HAVE_PTHREAD := $(LZ4_PTHREAD_PROBED)
+endif
 HAVE_MULTITHREAD  := $(shell [ "$(HAVE_PTHREAD)" -eq "1" -o -n "$(filter Windows%,$(OS))" ] && echo 1 || echo 0)
 ifeq ($(HAVE_MULTITHREAD), 1)
   THREAD_MSG := ==> built with multithreading support
-  THREAD_CPP := -DLZ4IO_MULTITHREAD
-  ifeq ($(HAVE_PTHREAD), 1)
+  # LZ4F_MULTITHREAD : liblz4 sources are compiled into lz4, and compress frames with worker threads
+  THREAD_CPP := -DLZ4IO_MULTITHREAD -DLZ4F_MULTITHREAD=1
+  # MinGW and Windows : Windows threads, as in lib/Makefile (clang warns that -pthread is unused)
+  ifeq ($(HAVE_PTHREAD)$(filter MINGW% Windows%,$(TARGET_OS)), 1)
     THREAD_LD  := -pthread
   endif
 else
@@ -94,10 +105,10 @@ $(V)$(VERBOSE).SILENT:
 all: lz4 lz4-nomt lz4c unlz4 lz4cat
 
 .PHONY: all32
-all32: CFLAGS+=-m32
+all32: MCM_CFLAGS += -m32
 all32: all
 
-LZ4_OBJS := $(notdir $(OBJFILES))
+LZ4_OBJS := $(OBJFILES)
 
 ifeq ($(WINBASED),yes)
 lz4-exe.rc: lz4-exe.rc.in
@@ -112,20 +123,20 @@ lz4-exe.rc: lz4-exe.rc.in
 lz4-exe.o: lz4-exe.rc
 	$(WINDRES) -i lz4-exe.rc -o lz4-exe.o
 
-lz4: CPPFLAGS += $(THREAD_CPP)
-lz4: LDFLAGS += $(THREAD_LD)
+lz4: MCM_CPPFLAGS += $(THREAD_CPP)
+lz4: MCM_LDFLAGS += $(THREAD_LD)
 $(eval $(call c_program,lz4,$(LZ4_OBJS),lz4-exe.o,echo "$(THREAD_MSG)"))
 
 else # not WINBASED
 
-lz4: CPPFLAGS += $(THREAD_CPP)
-lz4: LDFLAGS += $(THREAD_LD)
+lz4: MCM_CPPFLAGS += $(THREAD_CPP)
+lz4: MCM_LDFLAGS += $(THREAD_LD)
 $(eval $(call c_program,lz4,$(LZ4_OBJS),,echo "$(THREAD_MSG)"))
 endif
 
 .PHONY: lz4-release
 lz4-release: DEBUGFLAGS=
-lz4-release: CPPFLAGS+=-DNDEBUG
+lz4-release: MCM_CPPFLAGS += -DNDEBUG
 lz4-release: lz4
 
 lz4-nomt:
@@ -134,7 +145,7 @@ $(eval $(call c_program,lz4-nomt,$(LZ4_OBJS)))
 CLEAN += lz4-wlib
 lz4-wlib: LIBFILES =
 lz4-wlib: SRCFILES+= $(LIBLZ4DIR)/xxhash.c  # benchmark unit needs XXH64()
-lz4-wlib: LDFLAGS += -L $(LIBLZ4DIR)
+lz4-wlib: MCM_LDFLAGS += -L $(LIBLZ4DIR)
 lz4-wlib: LDLIBS   = -llz4
 lz4-wlib: liblz4 $(OBJFILES)
 	@echo WARNING: $@ must link to an extended variant of the dynamic library which also exposes unstable symbols
@@ -149,7 +160,7 @@ CLEAN += lz4c
 lz4c: lz4
 	$(LN_SF) lz4$(EXT) lz4c$(EXT)
 
-lz4c32: CFLAGS += -m32
+lz4c32: MCM_CFLAGS += -m32
 $(eval $(call c_program,lz4c32,$(LZ4_OBJS)))
 
 CLEAN += unlz4

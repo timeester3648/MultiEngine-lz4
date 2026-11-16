@@ -2,7 +2,7 @@
 # LZ4 examples - Makefile
 # Copyright (C) Yann Collet 2011-2020
 #
-# GPL v2 License
+# GPL-2.0-or-later License
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -29,7 +29,7 @@
 
 LIBDIR    := ../lib
 
-CPPFLAGS  += -I$(LIBDIR)
+MCM_CPPFLAGS += -I$(LIBDIR)   # flags the build needs : see lib/Makefile
 USERCFLAGS:= $(CFLAGS)
 WFLAGS     = -std=gnu99 -Wall -Wextra -Wundef -Wshadow -Wcast-align -Wstrict-prototypes -Wc++-compat
 CFLAGS     = $(WFLAGS) -O2 $(USERCFLAGS)
@@ -39,22 +39,23 @@ TESTFILE_SMALL= .gitignore
 LZ4DIR     = ../programs
 LZ4        = $(LZ4DIR)/lz4
 LIBLZ4DIR  = ../lib
-LIBLZ4SRCS = $(notdir $(wildcard $(LIBLZ4DIR)/*.c))
+LIBLZ4SRCS = $(wildcard $(LIBLZ4DIR)/*.c)
 LIBLZ4OBJS = $(LIBLZ4SRCS:.c=.o)
 SLIBLZ4   := liblz4.a
 
 default: all
 
-C_SRCDIRS = . ../lib
+C_SRCDIRS = $(LIBLZ4DIR)
 include ../build/make/multiconf.make
 
-$(SLIBLZ4):
+$(SLIBLZ4): ARFLAGS = rcs
 $(eval $(call static_library,$(SLIBLZ4), $(LIBLZ4OBJS)))
 
 ALL = print_version \
 	  simple_buffer \
 	  frameCompress \
 	  fileCompress \
+	  fileRandomAccess \
       blockStreaming_doubleBuffer \
 	  blockStreaming_ringBuffer \
 	  streamingHC_ringBuffer \
@@ -95,6 +96,8 @@ test : all $(LZ4)
 	@echo "\n=== file compression ==="
 	./fileCompress$(EXT) $(TESTFILE)
 	$(LZ4) -vt $(TESTFILE).lz4
+	@echo "\n=== file random access ==="
+	./fileRandomAccess$(EXT) $(TESTFILE)
 	@echo "\n=== Q&D benchmark ==="
 	./bench_functions$(EXT) 10000
 

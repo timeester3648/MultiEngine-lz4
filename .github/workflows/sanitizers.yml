@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout
-      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
     - name: Run UBSan tests
       run: make ubsan V=1
@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout
-      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
     - name: Install 32-bit dependencies
       run: |
@@ -44,7 +44,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout
-      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
     - name: Setup memory mapping
       run: sudo sysctl -w vm.mmap_min_addr=4096
@@ -57,7 +57,12 @@ jobs:
     - name: ASan - frame test
       run: |
         make clean
-        CFLAGS=-fsanitize=address LDFLAGS=-fsanitize=address make -j -C tests test-frametest V=1
+        CFLAGS=-fsanitize=address LDFLAGS=-fsanitize=address make -j -C tests test-frametest test-unittest V=1
+
+    - name: ASan - multi-threaded frame compression
+      run: |
+        make clean
+        CFLAGS=-fsanitize=address LDFLAGS=-fsanitize=address make -j -C tests test-frameMT-quick V=1
 
     - name: ASan - fuzzer test
       run: |
@@ -69,7 +74,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout
-      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
     - name: MSan - basic check
       run: |
@@ -79,7 +84,14 @@ jobs:
     - name: MSan - frame test
       run: |
         make clean
-        CC=clang CFLAGS=-fsanitize=memory LDFLAGS=-fsanitize=memory make -j -C tests test-frametest V=1
+        CC=clang CFLAGS=-fsanitize=memory LDFLAGS=-fsanitize=memory make -j -C tests test-frametest test-unittest V=1
+
+    - name: MSan - multi-threaded frame compression
+      # build with multi-threading support only : the build without it runs the same code serially
+      run: |
+        make clean
+        CC=clang CFLAGS=-fsanitize=memory LDFLAGS=-fsanitize=memory make -j -C tests frameMT V=1
+        cd tests && ./frameMT -q
 
     - name: MSan - fuzzer test
       run: |
@@ -91,9 +103,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout
-      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
     - name: TSan - CLI test
       run: |
         make clean
         CC=clang CPPFLAGS="-fsanitize=thread" make -j -C tests test-lz4 V=1
+
+    - name: TSan - multi-threaded frame compression
+      run: |
+        make clean
+        CC=clang CPPFLAGS="-fsanitize=thread" make -j -C tests test-frameMT-quick V=1

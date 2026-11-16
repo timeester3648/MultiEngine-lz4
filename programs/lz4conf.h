@@ -1,7 +1,7 @@
 /*
   LZ4conf.h - compile-time parameters
   Copyright (c) Yann Collet. All rights reserved.
-  GPL v2 License
+  GPL-2.0-or-later License
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -54,11 +54,6 @@
  * Can be overridden at runtime using -T# command */
 #ifndef LZ4_NBWORKERS_DEFAULT
 # define LZ4_NBWORKERS_DEFAULT 0
-#endif
-
-/* Maximum nb of compression threads selectable at runtime */
-#ifndef LZ4_NBWORKERS_MAX
-# define LZ4_NBWORKERS_MAX 200
 #endif
 
 /* Determines default lz4 block size when none provided.
